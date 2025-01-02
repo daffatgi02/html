@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Screen Sharing (Viewer Dummy Stream)</title>
+  <title>Screen Sharing (Viewer Calls Host with Dummy Stream)</title>
   <link
     href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
     rel="stylesheet"
@@ -20,7 +20,7 @@
 
 <body class="bg-light">
   <div class="container py-5">
-    <h1 class="text-center mb-4">Screen Sharing with Dummy Stream (Viewer Calls)</h1>
+    <h1 class="text-center mb-4">Screen Sharing with Minimal Dummy Stream</h1>
 
     <!-- Bagian Setup -->
     <div id="setup-container" class="text-center">
@@ -93,20 +93,22 @@
       let peer = null;      
       let hostStream = null; 
 
-      // ---------- HOST ----------
+      // ========== HOST ==========
       createBtn.addEventListener('click', () => {
         if (!usernameInput.value.trim()) {
           alert('Please enter a username');
           return;
         }
 
+        // Tampilkan UI Host, sembunyikan Setup
         setupContainer.classList.add('d-none');
         hostContainer.classList.remove('d-none');
 
+        // Buat PeerJS Host
         peer = new Peer({ debug: 2 });
 
         peer.on('open', (id) => {
-          console.log('[Host] ID:', id);
+          console.log('[Host] Peer open with ID:', id);
           hostUuidSpan.textContent = id;
         });
 
@@ -114,11 +116,12 @@
           console.error('[Host] Peer error:', err);
         });
 
-        // Data connection from viewer
+        // Data channel dari Viewer
         peer.on('connection', (conn) => {
           console.log('[Host] Data connection from viewer:', conn.peer);
 
           conn.on('open', () => {
+            // Jika host sudah share, beri tahu viewer
             if (hostStream) {
               conn.send('Host is ready to share the screen.');
             } else {
@@ -126,7 +129,7 @@
             }
           });
 
-          // Jika host berhenti share
+          // Jika host berhenti share di tengah jalan
           if (hostStream) {
             hostStream.getTracks().forEach((track) => {
               track.addEventListener('ended', () => {
@@ -136,19 +139,21 @@
           }
         });
 
-        // Panggilan masuk dari viewer
+        // Saat Viewer memanggil host
         peer.on('call', (call) => {
-          console.log('[Host] Incoming call from viewer:', call.peer);
+          console.log('[Host] Incoming call from:', call.peer);
           if (hostStream) {
+            // Jawab panggilan dengan stream host
             call.answer(hostStream);
           } else {
+            // Belum share, tolak
             call.answer();
             call.close();
           }
         });
       });
 
-      // Start sharing di Host
+      // Mulai sharing screen
       startShareBtn.addEventListener('click', async () => {
         try {
           hostStream = await navigator.mediaDevices.getDisplayMedia({
@@ -159,24 +164,27 @@
           console.log('[Host] Screen sharing started.');
         } catch (err) {
           console.error('[Host] share error:', err);
+          alert('Error sharing screen: ' + err.message);
         }
       });
 
 
-      // ---------- VIEWER ----------
+      // ========== VIEWER ==========
       joinBtn.addEventListener('click', () => {
         if (!usernameInput.value.trim()) {
           alert('Please enter a username');
           return;
         }
 
+        // Tampilkan UI Viewer, sembunyikan Setup
         setupContainer.classList.add('d-none');
         viewerContainer.classList.remove('d-none');
 
+        // Buat PeerJS Viewer
         peer = new Peer({ debug: 2 });
 
         peer.on('open', (viewerId) => {
-          console.log('[Viewer] ID:', viewerId);
+          console.log('[Viewer] Peer open with ID:', viewerId);
         });
 
         peer.on('error', (err) => {
@@ -184,7 +192,7 @@
         });
       });
 
-      // Connect to Host + Request Stream
+      // Connect ke Host + Request Stream
       connectBtn.addEventListener('click', async () => {
         const hostId = viewerUuidInput.value.trim();
         if (!hostId) {
@@ -192,7 +200,7 @@
           return;
         }
 
-        // Data connection ke host
+        // Buka data connection ke host
         const conn = peer.connect(hostId);
         conn.on('open', () => {
           console.log('[Viewer] Data connected to host:', hostId);
@@ -204,24 +212,29 @@
           if (msg === 'Host has not started screen sharing yet.') {
             alert('Host has not started screen sharing yet. Please wait...');
           } else if (msg === 'Host is ready to share the screen.') {
-            // 1) Buat dummy stream
-            let dummyStream = null;
+            // === Buat "dummy" stream super kecil agar tidak berat ===
+            let tinyStream;
             try {
-              // Request dummy audio/video = false
-              dummyStream = await navigator.mediaDevices.getUserMedia({
-                video: false,
+              // Browser modern menolak { video:false, audio:false }
+              // Maka kita set minimal 1 video track kecil (2x2 px).
+              tinyStream = await navigator.mediaDevices.getUserMedia({
+                video: {
+                  width: 2,
+                  height: 2,
+                  frameRate: 1
+                },
                 audio: false
               });
-              console.log('[Viewer] Got dummy stream.');
+              console.log('[Viewer] Acquired tiny dummy stream.');
             } catch (err) {
-              console.error('[Viewer] Dummy getUserMedia error:', err);
-              alert('Unable to get dummy stream: ' + err.message);
+              console.error('[Viewer] Error getUserMedia dummy:', err);
+              alert('Unable to get minimal dummy stream: ' + err.message);
               return;
             }
 
-            // 2) Panggil host dengan dummy stream
-            console.log('[Viewer] Calling host with dummy stream...');
-            const call = peer.call(hostId, dummyStream);
+            // Gunakan dummy stream saat memanggil host
+            console.log('[Viewer] Calling host with tiny stream...');
+            const call = peer.call(hostId, tinyStream);
 
             if (call) {
               call.on('stream', (remoteStream) => {
