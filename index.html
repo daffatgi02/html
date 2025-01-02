@@ -19,6 +19,27 @@
       right: 1rem;
       z-index: 1055;
     }
+
+    /* Modern Volume Control Styles */
+    .volume-control {
+      display: flex;
+      align-items: center;
+      gap: 0.5rem;
+    }
+
+    .volume-slider {
+      width: 150px;
+    }
+
+    .volume-icon {
+      cursor: pointer;
+      font-size: 1.5rem;
+      color: #495057;
+    }
+
+    .volume-icon:hover {
+      color: #0d6efd;
+    }
   </style>
 </head>
 
@@ -52,6 +73,18 @@
       <div class="card-body text-center">
         <h5 class="card-title mb-3">Host Panel</h5>
         <p>Your Host UUID: <span id="host-uuid" class="fw-bold text-primary"></span></p>
+
+        <!-- Resolution and Frame Rate Selection -->
+        <div class="mb-3">
+          <label for="resolution-select" class="form-label">Select Screen Resolution & Frame Rate</label>
+          <select id="resolution-select" class="form-select">
+            <option value="1080p60">1080p @ 60 FPS</option>
+            <option value="720p60">720p @ 60 FPS</option>
+            <option value="720p30">720p @ 30 FPS</option>
+            <option value="480p30">480p @ 30 FPS</option>
+          </select>
+        </div>
+
         <button id="start-share-btn" class="btn btn-success mb-3">
           <i class="bi bi-share-fill"></i> Start Screen Sharing (with Audio)
         </button>
@@ -80,14 +113,16 @@
 
         <!-- Kontrol Volume & Fullscreen -->
         <div class="mt-3 d-flex align-items-center justify-content-center gap-3">
+          <!-- Fullscreen Button -->
           <button id="fullscreen-btn" class="btn btn-outline-secondary">
             <i class="bi bi-fullscreen"></i> Fullscreen
           </button>
 
-          <div class="d-flex align-items-center">
-            <label for="volume-control" class="form-label me-2 mb-0">Volume</label>
-            <input type="range" id="volume-control" min="0" max="1" step="0.1" value="1"
-              class="form-range" style="width: 150px;" />
+          <!-- Modern Volume Control -->
+          <div class="volume-control">
+            <i id="mute-btn" class="bi bi-volume-up-fill volume-icon" title="Mute/Unmute"></i>
+            <input type="range" id="volume-control" min="0" max="1" step="0.05" value="1"
+              class="form-range volume-slider" />
           </div>
         </div>
       </div>
@@ -125,6 +160,9 @@
 
       const volumeControl = document.getElementById('volume-control');
       const fullscreenBtn = document.getElementById('fullscreen-btn');
+      const muteBtn = document.getElementById('mute-btn');
+
+      const resolutionSelect = document.getElementById('resolution-select');
 
       const toastContainer = document.getElementById('toast-container');
 
@@ -132,6 +170,7 @@
       let hostStream = null;
       let isSharing = false;
       let connections = [];
+      let isMuted = false;
 
       // Function to show toast messages
       function showToast(message, type = 'primary') {
@@ -235,10 +274,10 @@
       startShareBtn.addEventListener('click', async () => {
         if (!isSharing) {
           try {
-            hostStream = await navigator.mediaDevices.getDisplayMedia({
-              video: true,
-              audio: true
-            });
+            const selectedOption = resolutionSelect.value;
+            const constraints = getConstraints(selectedOption);
+
+            hostStream = await navigator.mediaDevices.getDisplayMedia(constraints);
             hostVideo.srcObject = hostStream;
             isSharing = true;
             startShareBtn.innerHTML = '<i class="bi bi-stop-fill"></i> Stop Screen Sharing';
@@ -259,6 +298,52 @@
           stopSharing();
         }
       });
+
+      function getConstraints(option) {
+        switch (option) {
+          case '1080p60':
+            return {
+              video: {
+                width: { ideal: 1920 },
+                height: { ideal: 1080 },
+                frameRate: { ideal: 60 }
+              },
+              audio: true
+            };
+          case '720p60':
+            return {
+              video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                frameRate: { ideal: 60 }
+              },
+              audio: true
+            };
+          case '720p30':
+            return {
+              video: {
+                width: { ideal: 1280 },
+                height: { ideal: 720 },
+                frameRate: { ideal: 30 }
+              },
+              audio: true
+            };
+          case '480p30':
+            return {
+              video: {
+                width: { ideal: 854 },
+                height: { ideal: 480 },
+                frameRate: { ideal: 30 }
+              },
+              audio: true
+            };
+          default:
+            return {
+              video: true,
+              audio: true
+            };
+        }
+      }
 
       function stopSharing() {
         isSharing = false;
@@ -368,6 +453,8 @@
             console.log('[Viewer] Received remote stream from host.');
             viewerVideo.srcObject = remoteStream;
             showToast('Receiving screen stream from host.', 'success');
+            // Initialize volume control based on current volume
+            viewerVideo.volume = volumeControl.value;
           });
 
           call.on('close', () => {
@@ -386,12 +473,45 @@
         }
       }
 
-      volumeControl.addEventListener('input', () => {
-        if (viewerVideo.srcObject) {
-          viewerVideo.volume = volumeControl.value;
-        }
+      // ================== Modern Volume Control ==================
+      // Toggle Mute/Unmute
+      muteBtn.addEventListener('click', () => {
+        isMuted = !isMuted;
+        viewerVideo.muted = isMuted;
+        updateMuteIcon();
+        showToast(isMuted ? 'Audio Muted' : 'Audio Unmuted', 'info');
       });
 
+      function updateMuteIcon() {
+        if (isMuted || viewerVideo.volume === 0) {
+          muteBtn.classList.remove('bi-volume-up-fill', 'bi-volume-down-fill');
+          muteBtn.classList.add('bi-volume-mute-fill');
+        } else if (viewerVideo.volume > 0.5) {
+          muteBtn.classList.remove('bi-volume-down-fill', 'bi-volume-mute-fill');
+          muteBtn.classList.add('bi-volume-up-fill');
+        } else {
+          muteBtn.classList.remove('bi-volume-up-fill', 'bi-volume-mute-fill');
+          muteBtn.classList.add('bi-volume-down-fill');
+        }
+      }
+
+      // Volume Slider Control
+      volumeControl.addEventListener('input', () => {
+        viewerVideo.volume = volumeControl.value;
+        if (viewerVideo.volume === 0) {
+          viewerVideo.muted = true;
+          isMuted = true;
+        } else {
+          viewerVideo.muted = false;
+          isMuted = false;
+        }
+        updateMuteIcon();
+      });
+
+      // Initialize mute icon based on initial volume
+      updateMuteIcon();
+
+      // Fullscreen Button
       fullscreenBtn.addEventListener('click', () => {
         if (viewerVideo.requestFullscreen) {
           viewerVideo.requestFullscreen();
