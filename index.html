@@ -40,6 +40,39 @@
     .volume-icon:hover {
       color: #0d6efd;
     }
+
+    /* Floating Bandwidth Monitor Styles */
+    #bandwidth-monitor {
+      position: fixed;
+      bottom: 1rem;
+      right: 1rem;
+      width: 250px;
+      background-color: rgba(255, 255, 255, 0.9);
+      border: 1px solid #dee2e6;
+      border-radius: 0.5rem;
+      box-shadow: 0 0.5rem 1rem rgba(0, 0, 0, 0.15);
+      padding: 1rem;
+      z-index: 1060;
+      display: none; /* Hidden by default */
+    }
+
+    #bandwidth-monitor h5 {
+      margin-bottom: 1rem;
+    }
+
+    #bandwidth-monitor .bandwidth-stats {
+      font-size: 0.9rem;
+    }
+
+    #bandwidth-monitor .toggle-btn {
+      position: absolute;
+      top: 0.5rem;
+      right: 0.5rem;
+      border: none;
+      background: none;
+      font-size: 1.2rem;
+      cursor: pointer;
+    }
   </style>
 </head>
 
@@ -140,6 +173,21 @@
     </div>
   </div>
 
+  <!-- Floating Bandwidth Monitor -->
+  <div id="bandwidth-monitor">
+    <button class="toggle-btn" id="close-monitor-btn">&times;</button>
+    <h5>Bandwidth Monitor</h5>
+    <div class="bandwidth-stats">
+      <p>Download: <span id="download-rate">0</span> Kbps</p>
+      <p>Upload: <span id="upload-rate">0</span> Kbps</p>
+    </div>
+  </div>
+
+  <!-- Toggle Button for Bandwidth Monitor -->
+  <button id="toggle-monitor-btn" class="btn btn-info" style="position: fixed; bottom: 1rem; right: 260px; z-index: 1061;">
+    <i class="bi bi-bar-chart-line"></i> Bandwidth Monitor
+  </button>
+
   <script>
     document.addEventListener('DOMContentLoaded', () => {
       const setupContainer = document.getElementById('setup-container');
@@ -166,11 +214,36 @@
 
       const toastContainer = document.getElementById('toast-container');
 
+      // ================== BANDWIDTH MONITOR ==================
+      const bandwidthMonitor = document.getElementById('bandwidth-monitor');
+      const toggleMonitorBtn = document.getElementById('toggle-monitor-btn');
+      const closeMonitorBtn = document.getElementById('close-monitor-btn');
+      const downloadRateSpan = document.getElementById('download-rate');
+      const uploadRateSpan = document.getElementById('upload-rate');
+
+      let monitorInterval = null;
+      let isMonitoring = false;
+
+      // Function to toggle the bandwidth monitor visibility
+      toggleMonitorBtn.addEventListener('click', () => {
+        bandwidthMonitor.style.display = 'block';
+      });
+
+      closeMonitorBtn.addEventListener('click', () => {
+        bandwidthMonitor.style.display = 'none';
+      });
+
+      // ================== END OF BANDWIDTH MONITOR ==================
+
       let peer = null;
       let hostStream = null;
       let isSharing = false;
       let connections = [];
       let isMuted = false;
+
+      // Variables for bandwidth monitoring
+      let previousDownload = 0;
+      let previousUpload = 0;
 
       // Function to show toast messages
       function showToast(message, type = 'primary') {
@@ -410,6 +483,7 @@
         }
 
         const conn = peer.connect(hostId);
+        connections.push(conn); // Track connection for bandwidth monitoring
         conn.on('open', () => {
           console.log('[Viewer] Data connected to host:', hostId);
           showToast(`Connected to host: ${hostId}`, 'success');
@@ -459,6 +533,7 @@
         }
 
         const call = peer.call(hostId, tinyStream);
+        connections.push(call); // Track call for bandwidth monitoring
 
         if (call) {
           call.on('stream', (remoteStream) => {
@@ -535,6 +610,102 @@
           viewerVideo.msRequestFullscreen();
         }
       });
+
+      // ================== BANDWIDTH MONITORING LOGIC ==================
+
+      // Function to start monitoring bandwidth
+      function startMonitoring() {
+        if (isMonitoring) return;
+
+        isMonitoring = true;
+        monitorInterval = setInterval(updateBandwidthStats, 1000); // Update every second
+        showToast('Bandwidth monitoring started.', 'info');
+      }
+
+      // Function to stop monitoring bandwidth
+      function stopMonitoring() {
+        if (!isMonitoring) return;
+
+        isMonitoring = false;
+        clearInterval(monitorInterval);
+        showToast('Bandwidth monitoring stopped.', 'info');
+        // Reset stats display
+        downloadRateSpan.textContent = '0';
+        uploadRateSpan.textContent = '0';
+      }
+
+      // Event listener for the toggle button
+      bandwidthMonitor.addEventListener('click', (e) => {
+        // Prevent clicks inside the monitor from toggling it
+        e.stopPropagation();
+      });
+
+      toggleMonitorBtn.addEventListener('dblclick', () => {
+        // Double-click to toggle monitoring
+        if (isMonitoring) {
+          stopMonitoring();
+        } else {
+          startMonitoring();
+        }
+      });
+
+      // Alternatively, you can use a separate button inside the monitor to start/stop
+      // For simplicity, we'll use the toggleMonitorBtn to control visibility and
+      // start/stop monitoring separately.
+
+      // Function to update bandwidth statistics
+      async function updateBandwidthStats() {
+        if (!peer) return;
+
+        let totalDownload = 0;
+        let totalUpload = 0;
+
+        // Iterate over all connections
+        connections.forEach((conn) => {
+          // Check if the connection is a data connection
+          if (conn instanceof Peer.DataConnection) {
+            // Data connections don't provide bandwidth stats easily
+            // You might need to implement custom tracking if necessary
+            // For simplicity, we'll skip data connections
+            return;
+          }
+
+          // Check if the connection is a media call
+          if (conn instanceof Peer.MediaConnection) {
+            const peerConnection = conn.peerConnection;
+            if (!peerConnection) return;
+
+            peerConnection.getStats(null).then(stats => {
+              stats.forEach(report => {
+                if (report.type === 'inbound-rtp' && report.kind === 'video') {
+                  totalDownload += report.bytesReceived;
+                }
+                if (report.type === 'outbound-rtp' && report.kind === 'video') {
+                  totalUpload += report.bytesSent;
+                }
+              });
+
+              // Calculate rate
+              const downloadRate = ((totalDownload - previousDownload) * 8) / 1000; // Kbps
+              const uploadRate = ((totalUpload - previousUpload) * 8) / 1000; // Kbps
+
+              previousDownload = totalDownload;
+              previousUpload = totalUpload;
+
+              downloadRateSpan.textContent = downloadRate.toFixed(2);
+              uploadRateSpan.textContent = uploadRate.toFixed(2);
+            }).catch(err => {
+              console.error('Error fetching stats:', err);
+            });
+          }
+        });
+      }
+
+      // Start monitoring automatically (optional)
+      // startMonitoring();
+
+      // ================== END OF BANDWIDTH MONITORING LOGIC ==================
+
     });
   </script>
 </body>
