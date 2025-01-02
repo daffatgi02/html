@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Screen Sharing with Audio, Volume, and Fullscreen</title>
+  <title>Screen Sharing Toggle (Start/Stop) + Audio</title>
   <link
     href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
     rel="stylesheet"
@@ -12,15 +12,12 @@
     src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"
     defer
   ></script>
-  <script
-    src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"
-    crossorigin="anonymous"
-  ></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.4.4/peerjs.min.js" integrity="sha512-YfSitOylgKemGcXFsaHPoNOHBquU8R3w0l/V5QzYLcakwHsPkrpYiW/naAGRAI1mUg36r1e+dHR4vK24R7qavw==" crossorigin="anonymous" referrerpolicy="no-referrer"></script>
 </head>
 
 <body class="bg-light">
   <div class="container py-4">
-    <h2 class="text-center mb-4">Screen Sharing with Audio, Volume Control & Fullscreen</h2>
+    <h2 class="text-center mb-4">Screen Sharing (Toggle Start/Stop) + Audio</h2>
 
     <!-- Bagian Setup -->
     <div id="setup-container" class="text-center">
@@ -117,8 +114,9 @@
       const volumeControl = document.getElementById('volume-control');
       const fullscreenBtn = document.getElementById('fullscreen-btn');
 
-      let peer = null;      
-      let hostStream = null; 
+      let peer = null;
+      let hostStream = null;
+      let isSharing = false; // menandakan host sedang share atau tidak
 
       // ================== HOST ==================
       createBtn.addEventListener('click', () => {
@@ -169,7 +167,6 @@
         peer.on('call', (call) => {
           console.log('[Host] Incoming call from:', call.peer);
           if (hostStream) {
-            // Jawab panggilan dengan stream host
             call.answer(hostStream);
           } else {
             // Belum share, tolak
@@ -179,22 +176,50 @@
         });
       });
 
-      // Mulai sharing screen dengan audio
+      // Tombol Start/Stop Share
       startShareBtn.addEventListener('click', async () => {
-        try {
-          // Meminta share screen + audio
-          hostStream = await navigator.mediaDevices.getDisplayMedia({
-            video: true,
-            audio: true   // Pastikan user mencentang "Share tab audio" jika Chrome
-          });
-          hostVideo.srcObject = hostStream;
-          console.log('[Host] Screen sharing (with audio) started.');
-        } catch (err) {
-          console.error('[Host] share error:', err);
-          alert('Error sharing screen: ' + err.message);
+        if (!isSharing) {
+          // START SHARE
+          try {
+            hostStream = await navigator.mediaDevices.getDisplayMedia({
+              video: true,
+              audio: true  // Pastikan user mencentang "Share audio" di Chrome
+            });
+            hostVideo.srcObject = hostStream;
+            console.log('[Host] Screen sharing (with audio) started.');
+
+            isSharing = true;
+            startShareBtn.textContent = 'Stop Screen Sharing';
+
+            // Jika user menekan "Stop sharing" di popup browser
+            hostStream.getTracks().forEach((track) => {
+              track.addEventListener('ended', () => {
+                console.log('[Host] Track ended => user manually stopped sharing');
+                stopSharing();
+              });
+            });
+          } catch (err) {
+            console.error('[Host] share error:', err);
+            alert('Error sharing screen: ' + err.message);
+          }
+        } else {
+          // STOP SHARE
+          stopSharing();
         }
       });
 
+      function stopSharing() {
+        isSharing = false;
+        startShareBtn.textContent = 'Start Screen Sharing (with Audio)';
+
+        if (hostStream) {
+          hostStream.getTracks().forEach((track) => {
+            track.stop(); // hentikan track
+          });
+          hostStream = null;
+          console.log('[Host] Sharing stopped manually.');
+        }
+      }
 
       // ================== VIEWER ==================
       joinBtn.addEventListener('click', () => {
@@ -245,9 +270,8 @@
             let tinyStream = null;
             try {
               tinyStream = await navigator.mediaDevices.getUserMedia({
-                // Minimal sekali, agar PeerJS 1.4.0+ tidak error
-                video: { width: 2, height: 2, frameRate: 1 },
-                audio: false
+                video: { width: 1920, height: 1080, frameRate: 60 },
+                audio: true
               });
               console.log('[Viewer] Acquired tiny dummy stream.');
             } catch (err) {
