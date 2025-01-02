@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>Screen Sharing (Viewer Calls Host with Dummy Stream)</title>
+  <title>Screen Sharing with Audio, Volume, and Fullscreen</title>
   <link
     href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css"
     rel="stylesheet"
@@ -19,8 +19,8 @@
 </head>
 
 <body class="bg-light">
-  <div class="container py-5">
-    <h1 class="text-center mb-4">Screen Sharing with Minimal Dummy Stream</h1>
+  <div class="container py-4">
+    <h2 class="text-center mb-4">Screen Sharing with Audio, Volume Control & Fullscreen</h2>
 
     <!-- Bagian Setup -->
     <div id="setup-container" class="text-center">
@@ -37,18 +37,20 @@
 
     <!-- Bagian Host -->
     <div id="host-container" class="d-none text-center">
-      <p>Your UUID: <span id="host-uuid" class="fw-bold"></span></p>
+      <p>Your Host UUID: <span id="host-uuid" class="fw-bold"></span></p>
       <button id="start-share-btn" class="btn btn-success">
-        Start Screen Sharing
+        Start Screen Sharing (with Audio)
       </button>
-      <video
-        id="host-video"
-        class="mt-3"
-        autoplay
-        muted
-        playsinline
-        style="width: 100%; max-width: 600px;"
-      ></video>
+      <div class="mt-3">
+        <video
+          id="host-video"
+          class="border border-dark"
+          autoplay
+          muted
+          playsinline
+          style="width: 100%; max-width: 600px;"
+        ></video>
+      </div>
     </div>
 
     <!-- Bagian Viewer -->
@@ -61,14 +63,35 @@
         required
       />
       <button id="connect-btn" class="btn btn-primary">Connect</button>
+      <br/>
 
-      <video
-        id="viewer-video"
-        class="mt-3"
-        autoplay
-        playsinline
-        style="width: 100%; max-width: 600px;"
-      ></video>
+      <div class="mt-3">
+        <video
+          id="viewer-video"
+          class="border border-dark"
+          autoplay
+          playsinline
+          style="width: 100%; max-width: 600px;"
+        ></video>
+      </div>
+
+      <!-- Kontrol Volume & Fullscreen -->
+      <div class="mt-3 d-flex align-items-center justify-content-center gap-3">
+        <button id="fullscreen-btn" class="btn btn-secondary">Fullscreen</button>
+
+        <div style="min-width: 100px;">
+          <label for="volume-control" class="form-label mb-0">Volume</label>
+          <input
+            type="range"
+            id="volume-control"
+            min="0"
+            max="1"
+            step="0.1"
+            value="1"
+            class="form-range"
+          />
+        </div>
+      </div>
     </div>
   </div>
 
@@ -90,12 +113,17 @@
       const viewerUuidInput = document.getElementById('viewer-uuid');
       const viewerVideo = document.getElementById('viewer-video');
 
+      // Volume & fullscreen controls
+      const volumeControl = document.getElementById('volume-control');
+      const fullscreenBtn = document.getElementById('fullscreen-btn');
+
       let peer = null;      
       let hostStream = null; 
 
-      // ========== HOST ==========
+      // ================== HOST ==================
       createBtn.addEventListener('click', () => {
-        if (!usernameInput.value.trim()) {
+        const username = usernameInput.value.trim();
+        if (!username) {
           alert('Please enter a username');
           return;
         }
@@ -119,9 +147,7 @@
         // Data channel dari Viewer
         peer.on('connection', (conn) => {
           console.log('[Host] Data connection from viewer:', conn.peer);
-
           conn.on('open', () => {
-            // Jika host sudah share, beri tahu viewer
             if (hostStream) {
               conn.send('Host is ready to share the screen.');
             } else {
@@ -153,15 +179,16 @@
         });
       });
 
-      // Mulai sharing screen
+      // Mulai sharing screen dengan audio
       startShareBtn.addEventListener('click', async () => {
         try {
+          // Meminta share screen + audio
           hostStream = await navigator.mediaDevices.getDisplayMedia({
             video: true,
-            audio: true
+            audio: true   // Pastikan user mencentang "Share tab audio" jika Chrome
           });
           hostVideo.srcObject = hostStream;
-          console.log('[Host] Screen sharing started.');
+          console.log('[Host] Screen sharing (with audio) started.');
         } catch (err) {
           console.error('[Host] share error:', err);
           alert('Error sharing screen: ' + err.message);
@@ -169,9 +196,10 @@
       });
 
 
-      // ========== VIEWER ==========
+      // ================== VIEWER ==================
       joinBtn.addEventListener('click', () => {
-        if (!usernameInput.value.trim()) {
+        const username = usernameInput.value.trim();
+        if (!username) {
           alert('Please enter a username');
           return;
         }
@@ -204,6 +232,7 @@
         const conn = peer.connect(hostId);
         conn.on('open', () => {
           console.log('[Viewer] Data connected to host:', hostId);
+          connectBtn.disabled = true;
         });
 
         conn.on('data', async (msg) => {
@@ -212,33 +241,29 @@
           if (msg === 'Host has not started screen sharing yet.') {
             alert('Host has not started screen sharing yet. Please wait...');
           } else if (msg === 'Host is ready to share the screen.') {
-            // === Buat "dummy" stream super kecil agar tidak berat ===
-            let tinyStream;
+            // Buat "dummy" stream dengan video kecil agar peer.call tidak error
+            let tinyStream = null;
             try {
-              // Browser modern menolak { video:false, audio:false }
-              // Maka kita set minimal 1 video track kecil (2x2 px).
               tinyStream = await navigator.mediaDevices.getUserMedia({
-                video: {
-                  width: 2,
-                  height: 2,
-                  frameRate: 1
-                },
+                // Minimal sekali, agar PeerJS 1.4.0+ tidak error
+                video: { width: 2, height: 2, frameRate: 1 },
                 audio: false
               });
               console.log('[Viewer] Acquired tiny dummy stream.');
             } catch (err) {
-              console.error('[Viewer] Error getUserMedia dummy:', err);
-              alert('Unable to get minimal dummy stream: ' + err.message);
+              console.error('[Viewer] Dummy getUserMedia error:', err);
+              alert('Failed to get minimal dummy stream:' + err.message);
               return;
             }
 
-            // Gunakan dummy stream saat memanggil host
-            console.log('[Viewer] Calling host with tiny stream...');
+            // Memanggil host dengan dummyStream
+            console.log('[Viewer] Calling host (requesting audio+video) ...');
             const call = peer.call(hostId, tinyStream);
 
             if (call) {
               call.on('stream', (remoteStream) => {
                 console.log('[Viewer] Received remote stream from host.');
+                // Remote stream punya audio & video screen sharing
                 viewerVideo.srcObject = remoteStream;
               });
 
@@ -258,6 +283,24 @@
             viewerVideo.srcObject = null;
           }
         });
+      });
+
+      // Kontrol Volume di sisi Viewer
+      volumeControl.addEventListener('input', () => {
+        viewerVideo.volume = volumeControl.value;
+      });
+
+      // Fullscreen Viewer
+      fullscreenBtn.addEventListener('click', () => {
+        if (viewerVideo.requestFullscreen) {
+          viewerVideo.requestFullscreen();
+        } else if (viewerVideo.webkitRequestFullscreen) {
+          viewerVideo.webkitRequestFullscreen();
+        } else if (viewerVideo.mozRequestFullScreen) {
+          viewerVideo.mozRequestFullScreen();
+        } else if (viewerVideo.msRequestFullscreen) {
+          viewerVideo.msRequestFullscreen();
+        }
       });
     });
   </script>
