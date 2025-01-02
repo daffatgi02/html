@@ -1,0 +1,284 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>Screen Sharing App</title>
+  <link
+    href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css"
+    rel="stylesheet"
+  />
+  <script
+    src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.bundle.min.js"
+    defer
+  ></script>
+  <script
+    src="https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.4/peerjs.min.js"
+    integrity="sha512-iFU+yF1keEaLDC9HEwPfLMSRaS0unBHE14GEgx6pQKJXjp5v0tvX8xpfp2lgJ62XEjbYp/M5C3CAmej/PWXMyA=="
+    crossorigin="anonymous"
+    referrerpolicy="no-referrer"
+  ></script>
+</head>
+
+<body class="bg-light">
+  <div class="container py-5">
+    <h1 class="text-center mb-4">Screen Sharing App</h1>
+
+    <!-- Bagian Setup -->
+    <div id="setup-container" class="text-center">
+      <input
+        type="text"
+        id="username"
+        class="form-control mb-3"
+        placeholder="Enter your username"
+        required
+      />
+      <button id="create-btn" class="btn btn-primary">Create (Host)</button>
+      <button id="join-btn" class="btn btn-secondary">Join (Viewer)</button>
+    </div>
+
+    <!-- Bagian Host -->
+    <div id="host-container" class="d-none text-center">
+      <p>Your UUID: <span id="host-uuid" class="fw-bold"></span></p>
+      <button id="start-share-btn" class="btn btn-success">
+        Start Screen Sharing
+      </button>
+      <video
+        id="host-video"
+        class="mt-3"
+        autoplay
+        muted
+        playsinline
+        style="width: 100%; max-width: 600px;"
+      ></video>
+    </div>
+
+    <!-- Bagian Viewer -->
+    <div id="viewer-container" class="d-none text-center">
+      <input
+        type="text"
+        id="viewer-uuid"
+        class="form-control mb-3"
+        placeholder="Enter Host UUID"
+        required
+      />
+      <button id="connect-btn" class="btn btn-primary">Connect</button>
+
+      <video
+        id="viewer-video"
+        class="mt-3"
+        autoplay
+        playsinline
+        style="width: 100%; max-width: 600px;"
+      ></video>
+      <div class="mt-3">
+        <button id="fullscreen-btn" class="btn btn-secondary">Fullscreen</button>
+        <input
+          type="range"
+          id="volume-control"
+          min="0"
+          max="1"
+          step="0.1"
+          value="1"
+          class="form-range"
+        />
+      </div>
+    </div>
+  </div>
+
+  <script>
+    document.addEventListener('DOMContentLoaded', () => {
+      const setupContainer = document.getElementById('setup-container');
+      const hostContainer = document.getElementById('host-container');
+      const viewerContainer = document.getElementById('viewer-container');
+
+      const usernameInput = document.getElementById('username');
+      const createBtn = document.getElementById('create-btn');
+      const joinBtn = document.getElementById('join-btn');
+
+      const hostUuidSpan = document.getElementById('host-uuid');
+      const startShareBtn = document.getElementById('start-share-btn');
+      const hostVideo = document.getElementById('host-video');
+
+      const viewerUuidInput = document.getElementById('viewer-uuid');
+      const connectBtn = document.getElementById('connect-btn');
+      const viewerVideo = document.getElementById('viewer-video');
+      const fullscreenBtn = document.getElementById('fullscreen-btn');
+      const volumeControl = document.getElementById('volume-control');
+
+      let peer = null;      // PeerJS instance
+      let hostStream = null; // Stream dari host
+
+      // Tombol Create (Host)
+      createBtn.addEventListener('click', () => {
+        const username = usernameInput.value.trim();
+        if (!username) {
+          alert('Please enter a username');
+          return;
+        }
+
+        // Sembunyikan setup, tampilkan bagian host
+        setupContainer.classList.add('d-none');
+        hostContainer.classList.remove('d-none');
+
+        // Buat PeerJS untuk host (ID akan digenerate otomatis)
+        peer = new Peer();
+
+        // Ketika PeerJS sudah open (berhasil dapat ID)
+        peer.on('open', (id) => {
+          console.log('Host PeerJS open with ID:', id);
+          hostUuidSpan.textContent = id;
+        });
+
+        // PeerJS error handler
+        peer.on('error', (err) => {
+          console.error('PeerJS error (Host):', err);
+          alert('PeerJS error: ' + err.message);
+        });
+
+        // Ketika ada koneksi data dari viewer
+        peer.on('connection', (conn) => {
+          console.log('New data connection from viewer:', conn.peer);
+
+          // Event 'open' menandakan data channel siap
+          conn.on('open', () => {
+            if (hostStream) {
+              conn.send('Host is ready to share the screen.');
+            } else {
+              conn.send('Host has not started screen sharing yet.');
+            }
+          });
+
+          // Jika host men-stop share, kirim info ke semua viewer
+          if (hostStream) {
+            hostStream.getTracks().forEach((track) => {
+              track.addEventListener('ended', () => {
+                conn.send('Host stopped sharing the screen.');
+              });
+            });
+          }
+        });
+
+        // Ketika ada panggilan masuk dari viewer (viewer.call())
+        peer.on('call', (call) => {
+          console.log('Incoming call from viewer:', call.peer);
+
+          // Jika host sedang share stream, kita answer dengan stream
+          if (hostStream) {
+            call.answer(hostStream);
+          } else {
+            // Jika host belum share, tolak panggilan
+            call.answer();
+            call.close();
+          }
+        });
+      });
+
+      // Tombol Start Screen Sharing (Host)
+      startShareBtn.addEventListener('click', async () => {
+        try {
+          // Minta user share layar (bisa tab/window/entire screen)
+          hostStream = await navigator.mediaDevices.getDisplayMedia({
+            video: true,
+            audio: true, // Perhatikan: di browser tertentu, audio screen capture harus diaktifkan manual
+          });
+          hostVideo.srcObject = hostStream;
+        } catch (error) {
+          console.error('Error sharing screen:', error);
+          alert('Error sharing screen: ' + error.message);
+        }
+      });
+
+      // Tombol Join (Viewer)
+      joinBtn.addEventListener('click', () => {
+        const username = usernameInput.value.trim();
+        if (!username) {
+          alert('Please enter a username');
+          return;
+        }
+
+        // Sembunyikan setup, tampilkan viewer
+        setupContainer.classList.add('d-none');
+        viewerContainer.classList.remove('d-none');
+
+        // Buat PeerJS instance untuk viewer
+        peer = new Peer();
+
+        // PeerJS error handler (Viewer)
+        peer.on('error', (err) => {
+          console.error('PeerJS error (Viewer):', err);
+          alert('PeerJS error: ' + err.message);
+        });
+      });
+
+      // Tombol Connect (Viewer)
+      connectBtn.addEventListener('click', () => {
+        const hostUuid = viewerUuidInput.value.trim();
+        if (!hostUuid) {
+          alert('Please enter the host UUID');
+          return;
+        }
+
+        // Buka koneksi data channel ke host
+        const conn = peer.connect(hostUuid);
+
+        conn.on('open', () => {
+          console.log('Viewer connected to host:', hostUuid);
+        });
+
+        // Terima pesan dari host (status sharing)
+        conn.on('data', (data) => {
+          console.log('Message from host:', data);
+
+          if (data === 'Host has not started screen sharing yet.') {
+            alert('Host has not started screen sharing yet. Please wait...');
+          } else if (data === 'Host is ready to share the screen.') {
+            // Viewer menelepon host untuk minta stream
+            const call = peer.call(hostUuid, null);
+            if (call) {
+              // Jika panggilan berhasil, set video viewer ke stream host
+              call.on('stream', (stream) => {
+                viewerVideo.srcObject = stream;
+              });
+
+              call.on('error', (err) => {
+                console.error('Error receiving stream:', err);
+                alert('Error while receiving the stream. Please try again.');
+              });
+
+              call.on('close', () => {
+                console.log('Call closed by host.');
+                viewerVideo.srcObject = null;
+              });
+            } else {
+              console.error('Call object is undefined.');
+              alert('Unable to connect to the host. Maybe host is not sharing yet.');
+            }
+          } else if (data === 'Host stopped sharing the screen.') {
+            alert('The host has stopped sharing their screen.');
+            viewerVideo.srcObject = null;
+          }
+        });
+      });
+
+      // Fullscreen Viewer
+      fullscreenBtn.addEventListener('click', () => {
+        if (viewerVideo.requestFullscreen) {
+          viewerVideo.requestFullscreen();
+        } else if (viewerVideo.mozRequestFullScreen) {
+          viewerVideo.mozRequestFullScreen();
+        } else if (viewerVideo.webkitRequestFullscreen) {
+          viewerVideo.webkitRequestFullscreen();
+        } else if (viewerVideo.msRequestFullscreen) {
+          viewerVideo.msRequestFullscreen();
+        }
+      });
+
+      // Volume Control
+      volumeControl.addEventListener('input', () => {
+        viewerVideo.volume = volumeControl.value;
+      });
+    });
+  </script>
+</body>
+</html>
